@@ -59,6 +59,24 @@ let tasks = [
 ]
 let gantt = new Gantt("#gantt", tasks);
 ```
+### Tasks
+Each task offers several options:
+
+| **Option**               | **Description**                                                                 | **Possible Values**                                 | **Default**                        |
+|---------------------------|---------------------------------------------------------------------------------|----------------------------------------------------|------------------------------------|
+| `id`            | Task identifier.                                       | String, integer.                               | Auto-generated string.               |
+| `name`            | Task title printed on bar.                                       | String.                              | `undefined`                     |
+| `start`            | Task start date.                                       | Date                               | Error if not provided.                        |
+| `end`            | Task end date. Need to be higher than `start`. Optional if `duration` is provided.                                     | Date or `undefined` (see `duration`) .                              | Error if not provided and `duration` not provided, or if before `start`.                        |
+| `duration`            | Task duration. Used if `end` not provided, else ignored.                                       | String list of durations (space separated) to add at `start`. All durations are added cumulatively. Format: _interval_ (see below).                                 | `undefined`           |
+| `progress`            | Task progress status in `%`.                                       | Float in `[0, 100]` range.                                | `0`           |
+| `dependencies`            | List of task's dependencies.                                       | String of task's ids(`,` separated), or array of task's ids (as strings).                               | `[]`               |
+
+Some additional properties are available after the task has been imported into the Gantt:
+* `_start`: effective start date,
+* `_end`: effective end date,
+* `actual_duration`: effective duration in days, corresponding to `_end - _start`, including _ignored_ dates if relevant,
+* `ignored_duration`: total duration of _ignored_ dates in the `actual_duration`. The difference provides the working days task duration.
 
 ### Configuration
 Frappe Gantt offers a wide range of options to customize your chart.
@@ -87,7 +105,7 @@ Frappe Gantt offers a wide range of options to customize your chart.
 | `readonly_progress`      | Disables editing task progress.                                                 | `true`, `false`                                    | `false`                            |
 | `readonly_dates`         | Disables editing task dates.                                                    | `true`, `false`                                    | `false`                            |
 | `readonly`               | Disables all editing features.                                                  | `true`, `false`                                    | `false`                            |
-| `scroll_to`              | Determines the starting point when chart is rendered.                                           | `today`, `start`, `end`, or a date string.  | `today`                          |
+| `scroll_to`              | Determines the starting point when chart is rendered.                                           | `today`, `start`, `end`, a date string, or a Date.  | `today`                          |
 | `show_expected_progress` | Shows expected progress for tasks.                                              | `true`, `false`                                    | `false`                            |
 | `today_button`           | Adds a button to navigate to today’s date.                                      | `true`, `false`                                    | `true`                             |
 | `view_mode`              | The initial view mode of the Gantt chart.                                          | `Day`, `Week`, `Month`, `Year`.           | `Day`                            |
@@ -125,6 +143,16 @@ The function receives one object as an argument, containing:
 - `get_title`, `get_subtitle`, `get_details` (functions) - get the relevant section as a HTML node.
 - `set_title`, `set_subtitle`, `set_details` (functions) - take in the HTML of the relevant section
 - `add_action` (function) - accepts two parameters, `html` and `func` - respectively determining the HTML of the action and the callback when the action is pressed.
+
+#### Intervals
+Here are _interval_ possible values:
+* `y` or `year`
+* `m` or `month`
+* `d` or `day`
+* `h` or `hour`
+* `min` or `minute`
+* `s` or `second`
+* `ms` or `millisecond`
 
 ### API
 Frappe Gantt exposes a few helpful methods for you to interact with the chart:
