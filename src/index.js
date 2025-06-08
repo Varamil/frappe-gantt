@@ -241,7 +241,19 @@ export default class Gantt {
 
         let bar = this.bars[task._index];
         Object.assign(task, new_details);
-        bar.refresh();
+
+        this.setup_dependencies();
+
+        //update view mode
+        let old_pos = this.$container.scrollLeft, 
+            old_scroll_op= this.options.scroll_to;
+        this.options.scroll_to = null;
+        const m = this.options.view_mode;
+        this.update_view_scale(typeof m === 'string' ? this.options.view_modes.find((d) => d.name === m) : m);
+        this.setup_dates(true);
+        this.render();
+        this.$container.scrollLeft = old_pos;
+        this.options.scroll_to = old_scroll_op;
 
         return true;
     }
@@ -1550,7 +1562,7 @@ export default class Gantt {
     trigger_event(event, args) {
         if (this.options['on_' + event]) {
             this.options['on_' + event].apply(this, args);
-    }
+        }
     }
 
     /**
