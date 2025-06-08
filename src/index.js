@@ -122,84 +122,94 @@ export default class Gantt {
     setup_tasks(tasks) {
         this.tasks = tasks
             .map((task, i) => {
-                if (!task.start) {
-                    console.error(
-                        `task "${task.id}" doesn't have a start date`,
-                    );
-                    return false;
-                }
-
-                task._start = date_utils.parse(task.start);
-                if (task.end === undefined && task.duration !== undefined) {
-                    task.end = task._start;
-                    let durations = task.duration.split(' ');
-
-                    durations.forEach((tmpDuration) => {
-                        let { duration, scale } =
-                            date_utils.parse_duration(tmpDuration);
-                        task.end = date_utils.add(task.end, duration, scale);
-                    });
-                }
-                if (!task.end) {
-                    console.error(`task "${task.id}" doesn't have an end date`);
-                    return false;
-                }
-                task._end = date_utils.parse(task.end);
-
-                let diff = date_utils.diff(task._end, task._start, 'year');
-                if (diff < 0) {
-                    console.error(
-                        `start of task can't be after end of task: in task "${task.id}"`,
-                    );
-                    return false;
-                }
-
-                // make task invalid if duration too large
-                if (date_utils.diff(task._end, task._start, 'year') > 10) {
-                    console.error(
-                        `the duration of task "${task.id}" is too long (above ten years)`,
-                    );
-                    return false;
-                }
+                if (!this.#setup_task(task)) return false
 
                 // cache index
                 task._index = i;
 
-                // if hours is not set, assume the last day is full day
-                // e.g: 2018-09-09 becomes 2018-09-09 23:59:59
-                const task_end_values = date_utils.get_date_values(task._end);
-                if (task_end_values.slice(3).every((d) => d === 0)) {
-                    task._end = date_utils.add(task._end, 24, 'hour');
-                }
-
-                // dependencies
-                if (
-                    typeof task.dependencies === 'string' ||
-                    !task.dependencies
-                ) {
-                    let deps = [];
-                    if (task.dependencies) {
-                        deps = task.dependencies
-                            .split(',')
-                            .map((d) => d.trim().replaceAll(' ', '_'))
-                            .filter((d) => d);
-                    }
-                    task.dependencies = deps;
-                }
-
                 // uids
-                if (!task.id) {
-                    task.id = generate_id(task);
-                } else if (typeof task.id === 'string') {
-                    task.id = task.id.replaceAll(' ', '_');
-                } else {
-                    task.id = `${task.id}`;
-                }
+                task.id = this.get_sanitized_id(task.id, task.name);
 
                 return task;
             })
             .filter((t) => t);
         this.setup_dependencies();
+    }
+
+    get_sanitized_id(id, name) {
+        if (!id) {
+            return generate_id(name);
+        } else if (typeof id === 'string') {
+            return id.replaceAll(' ', '_');
+        } else {
+            return `${task.id}`;
+        }
+    }
+
+    #setup_task(task) {
+        if (!task.start) {
+            console.error(
+                `task "${task.id}" doesn't have a start date`,
+            );
+            return false;
+        }
+
+        task._start = date_utils.parse(task.start);
+        if (task.end === undefined && task.duration !== undefined) {
+            task.end = task._start;
+            let durations = task.duration.split(' ');
+
+            durations.forEach((tmpDuration) => {
+                let { duration, scale } =
+                    date_utils.parse_duration(tmpDuration);
+                task.end = date_utils.add(task.end, duration, scale);
+            });
+        }
+        if (!task.end) {
+            console.error(`task "${task.id}" doesn't have an end date`);
+            return false;
+        }
+        task._end = date_utils.parse(task.end);
+
+        let diff = date_utils.diff(task._end, task._start, 'year');
+        if (diff < 0) {
+            console.error(
+                `start of task can't be after end of task: in task "${task.id}"`,
+            );
+            return false;
+        }
+
+        // make task invalid if duration too large
+        if (date_utils.diff(task._end, task._start, 'year') > 10) {
+            console.error(
+                `the duration of task "${task.id}" is too long (above ten years)`,
+            );
+            return false;
+        }
+
+        // if hours is not set, assume the last day is full day
+        // e.g: 2018-09-09 becomes 2018-09-09 23:59:59
+        const task_end_values = date_utils.get_date_values(task._end);
+        if (task_end_values.slice(3).every((d) => d === 0)) {
+            task._end = date_utils.add(task._end, 24, 'hour');
+        }
+
+        // dependencies
+        if (
+            typeof task.dependencies === 'string' ||
+            !task.dependencies
+        ) {
+            let deps = [];
+            if (task.dependencies) {
+                deps = task.dependencies
+                    .split(',')
+                    .map((d) => d.trim().replaceAll(' ', '_'))
+                    .filter((d) => d);
+            }
+            task.dependencies = deps;
+        }
+
+        return task;
     }
 
     setup_dependencies() {
@@ -218,10 +228,22 @@ export default class Gantt {
     }
 
     update_task(id, new_details) {
-        let task = this.tasks.find((t) => t.id === id);
+        const san_id = this.get_sanitized_id(id, new_details.name);
+        let task = this.tasks.find((t) => t.id === san_id);
+        if (task === undefined) {
+            console.error(
+                `task id "${id}" not found`,
+            );
+            return false;
+        }
+
+        if (!this.#setup_task(new_details)) return false;
+
         let bar = this.bars[task._index];
         Object.assign(task, new_details);
         bar.refresh();
+
+        return true;
     }
 
     change_view_mode(mode = this.options.view_mode, maintain_pos = false) {
@@ -1528,7 +1550,7 @@ export default class Gantt {
     trigger_event(event, args) {
         if (this.options['on_' + event]) {
             this.options['on_' + event].apply(this, args);
-        }
+    }
     }
 
     /**
@@ -1571,8 +1593,8 @@ Gantt.VIEW_MODE = {
     YEAR: DEFAULT_VIEW_MODES[6],
 };
 
-function generate_id(task) {
-    return task.name + '_' + Math.random().toString(36).slice(2, 12);
+function generate_id(name) {
+    return name + '_' + Math.random().toString(36).slice(2, 12);
 }
 
 function sanitize(s) {
