@@ -183,7 +183,9 @@ export default class Bar {
     }
 
     calculate_progress_width() {
+        if (this.task.progress <= 0) return 0;        
         const width = this.$bar.getWidth();
+        if (this.task.progress >= 100)  return width;
         const ignored_end = this.x + width;
         const total_ignored_area =
             this.gantt.config.ignored_positions.reduce((acc, val) => {
@@ -418,7 +420,7 @@ export default class Bar {
         });
     }
 
-    update_bar_position({ x = null, width = null }) {
+    update_bar_position({ x = null, width = null, moving = false }) {
         const bar = this.$bar;
 
         if (x) {
@@ -440,7 +442,7 @@ export default class Bar {
 
         this.update_label_position();
         this.update_handle_position();
-        this.date_changed();
+        this.date_changed(moving);
         this.compute_duration();
 
         if (this.gantt.options.show_expected_progress) {
@@ -452,8 +454,7 @@ export default class Bar {
     }
 
     update_label_position_on_horizontal_scroll({ x, sx }) {
-        const container =
-            this.gantt.$container.querySelector('.gantt-container');
+        const container = this.gantt.$container;
         const label = this.group.querySelector('.bar-label');
         const img = this.group.querySelector('.bar-img') || '';
         const img_mask = this.bar_group.querySelector('.img_mask') || '';
@@ -486,20 +487,61 @@ export default class Bar {
         }
     }
 
-    date_changed() {
+    date_changed(ismoving) {
         let changed = false;
-        const { new_start_date, new_end_date } = this.compute_start_end_date();
+        let { new_start_date, new_end_date } = this.compute_start_end_date();        
         if (Number(this.task._start) !== Number(new_start_date)) {
-            changed = true;
-            this.task._start = new_start_date;
+            changed = true;           
         }
 
         if (Number(this.task._end) !== Number(new_end_date)) {
-            changed = true;
-            this.task._end = new_end_date;
+            changed = true;           
         }
 
         if (!changed) return;
+        
+        if (this.gantt.config.ignored_dates.length > 0 || this.gantt.config.ignored_function) {
+            if (ismoving) { //move only (this.task._end - this.task._start) === (new_end_date - new_start_date)
+                // Get duration target
+                const [duration_target, t ]= this.gantt.calc_working_days(this.task._start, this.task._end);
+                // Adjust start outside ignored days
+                while(!this.gantt.is_working_date_utc(new_start_date)) {
+                    new_start_date = date_utils.add(new_start_date, 1, 'day');
+                }
+                // Adjust end to match duration target without ignored
+                let [duration_in_days, _ ] = this.gantt.calc_working_days(new_start_date, new_end_date);                
+                while (duration_in_days < duration_target) {
+                    new_end_date = date_utils.add(new_end_date, 1, 'day');
+                    if (this.gantt.is_working_date_utc(date_utils.add(new_end_date, -1, 'second'))) {
+                        duration_in_days++;
+                    }
+                }
+                while (duration_in_days > duration_target) {
+                    new_end_date = date_utils.add(new_end_date, -1, 'day');
+                    if (this.gantt.is_working_date_utc(new_end_date)) {
+                        duration_in_days--;
+                    }
+                }
+                // remove weekend at the end if duration reached
+                while (!this.gantt.is_working_date_utc(date_utils.add(new_end_date, -1, 'day'))) {
+                    new_end_date = date_utils.add(new_end_date, -1, 'day');
+                }                
+            } else { //resize
+                // Adjust start outside ignored days
+                while(!this.gantt.is_working_date_utc(new_start_date)) {
+                    new_start_date = date_utils.add(new_start_date, 1, 'day');
+                }
+                // Adjust end outside ignored days
+                while(!this.gantt.is_working_date_utc(date_utils.add(new_end_date, -1, 'second'))) {
+                    new_end_date = date_utils.add(new_end_date, -1, 'day');
+                }
+            }
+        }
+
+        this.task._start = new_start_date;
+        this.task._end = new_end_date;
+        this.task.start = date_utils.to_string(new_start_date);
+        this.task.end = date_utils.to_string(new_end_date);
 
         this.gantt.trigger_event('date_change', [
             this.task,
@@ -529,11 +571,12 @@ export default class Bar {
             x_in_units * this.gantt.config.step,
             this.gantt.config.unit,
         );
+        new_start_date = date_utils.add(new_start_date, this.gantt.gantt_start.getTimezoneOffset() - new_start_date.getTimezoneOffset(), 'minute');
 
         const width_in_units = bar.getWidth() / this.gantt.config.column_width;
         const new_end_date = date_utils.add(
             new_start_date,
-            width_in_units * this.gantt.config.step,
+            Math.round(width_in_units * this.gantt.config.step),
             this.gantt.config.unit,
         );
 
@@ -612,24 +655,7 @@ export default class Bar {
     }
 
     compute_duration() {
-        let actual_duration_in_days = 0,
-            duration_in_days = 0;
-        for (
-            let d = new Date(this.task._start);
-            d < this.task._end;
-            d.setDate(d.getDate() + 1)
-        ) {
-            duration_in_days++;
-            if (
-                !this.gantt.config.ignored_dates.find(
-                    (k) => k.getTime() === d.getTime(),
-                ) &&
-                (!this.gantt.config.ignored_function ||
-                    !this.gantt.config.ignored_function(d))
-            ) {
-                actual_duration_in_days++;
-            }
-        }
+        let [actual_duration_in_days, duration_in_days] = this.gantt.calc_working_days(this.task._start, this.task._end);
         this.task.actual_duration = actual_duration_in_days;
         this.task.ignored_duration = duration_in_days - actual_duration_in_days;
 

@@ -190,7 +190,9 @@ export default {
             date.getSeconds() + (scale === SECOND ? qty : 0),
             date.getMilliseconds() + (scale === MILLISECOND ? qty : 0),
         ];
-        return new Date(...vals);
+        let new_date =  new Date(...vals);
+        const dtz = date.getTimezoneOffset() - new_date.getTimezoneOffset();
+        return dtz !== 0 ? this.add(new_date, dtz ,'minute'): new_date;      
     },
 
     start_of(date, scale) {

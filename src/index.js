@@ -155,15 +155,30 @@ export default class Gantt {
         }
 
         task._start = date_utils.parse(task.start);
+        // Adjust start date in ignored dates
+        while (!this.is_working_date_utc(task._start)) {
+            task._start = date_utils.add(task._start, 1, 'day');
+        }
+
+        // Manage duration
         if (task.end === undefined && task.duration !== undefined) {
-            task.end = task._start;
+            task._end = task._start;
             let durations = task.duration.split(' ');
 
             durations.forEach((tmpDuration) => {
                 let { duration, scale } =
                     date_utils.parse_duration(tmpDuration);
-                task.end = date_utils.add(task.end, duration, scale);
+                task._end = date_utils.add(task._end, duration, scale);
             });
+            // Adjust end date to match duration without ignored date to requested duration
+            let [work_duration, total_duration]= this.calc_working_days(task._start, task._end);           
+            while (work_duration < total_duration) {
+                task._end = date_utils.add(task._end, 1, 'day');                
+                if (this.is_working_date_utc(date_utils.add(task._end, -1, 'second'))) {
+                    work_duration++;
+                }
+            }
+            task.end = date_utils.to_string(task._end);
         }
         if (!task.end) {
             console.error(`task "${task.id}" doesn't have an end date`);
@@ -222,9 +237,9 @@ export default class Gantt {
         }
     }
 
-    refresh(tasks) {
+    refresh(tasks, maintain_pos = false) {
         this.setup_tasks(tasks);
-        this.change_view_mode();
+        this.change_view_mode(this.options.view_mode, maintain_pos);
     }
 
     update_task(id, new_details) {
@@ -317,6 +332,8 @@ export default class Gantt {
             }
         }
 
+        this.tasks_start = gantt_start;
+        this.tasks_end = gantt_end;
         gantt_start = date_utils.start_of(gantt_start, this.config.unit);
         gantt_end = date_utils.start_of(gantt_end, this.config.unit);
 
@@ -395,7 +412,7 @@ export default class Gantt {
 
     setup_layers() {
         this.layers = {};
-        const layers = ['grid', 'arrow', 'progress', 'bar'];
+        const layers = ['grid', 'ignored', 'arrow', 'progress', 'bar'];
         // make group layers
         for (let layer of layers) {
             this.layers[layer] = createSVG('g', {
@@ -646,13 +663,7 @@ export default class Gantt {
                 d <= this.gantt_end;
                 d.setDate(d.getDate() + 1)
             ) {
-                if (
-                    this.config.ignored_dates.find(
-                        (k) => k.getTime() == d.getTime(),
-                    ) ||
-                    (this.config.ignored_function &&
-                        this.config.ignored_function(d))
-                )
+                if (!this.is_working_date(d))
                     continue;
                 if (check_highlight(d) || (extra_func && extra_func(d))) {
                     const x =
@@ -751,13 +762,7 @@ export default class Gantt {
             d <= this.gantt_end;
             d.setDate(d.getDate() + 1)
         ) {
-            if (
-                !this.config.ignored_dates.find(
-                    (k) => k.getTime() == d.getTime(),
-                ) &&
-                (!this.config.ignored_function ||
-                    !this.config.ignored_function(d))
-            )
+            if (this.is_working_date(d))
                 continue;
             let diff =
                 date_utils.convert_scales(
@@ -773,7 +778,7 @@ export default class Gantt {
                 height: height,
                 class: 'ignored-bar',
                 style: 'fill: url(#diagonalHatch);',
-                append_to: this.$svg,
+                append_to: this.layers.ignored,
             });
         }
 
@@ -782,6 +787,32 @@ export default class Gantt {
         );
 
         if (!highlightDimensions) return;
+    }
+
+    is_working_date(d) {
+        return !this.config.ignored_dates.find(
+            (k) => k.getTime() == d.getTime(),
+        ) &&
+        (!this.config.ignored_function ||
+            !this.config.ignored_function(d))
+    }
+
+    is_working_date_utc(d) {
+        return this.is_working_date(date_utils.add(d, d.getTimezoneOffset(), 'minute'));
+    }
+
+    calc_working_days(start, end) {
+        let actual_duration_in_days = 0,
+            total_duration = 0,
+            d = new Date(start);
+        while (d < end) {
+            total_duration++;
+            if (this.is_working_date_utc(d)) {
+                actual_duration_in_days++;
+            }
+            d = date_utils.add(d, 1, 'day');
+        }
+        return [actual_duration_in_days, total_duration];
     }
 
     create_el({ left, top, width, height, id, classes, append_to, type }) {
@@ -945,8 +976,17 @@ export default class Gantt {
             date = this.gantt_start;
         } else if (date === 'end') {
             date = this.gantt_end;
+        } else if (date === 'tasks_start') {
+            date = this.tasks_start;
+        } else if (date === 'tasks_end') {
+            date = this.tasks_end;
         } else if (date === 'today') {
             return this.scroll_current();
+        } else if (date === 'best') {
+            date = new Date();
+            if (date < this.tasks_start) date = this.tasks_start;
+            else if (date > this.tasks_end) date = this.tasks_end;
+            else return this.scroll_current();            
         } else if (typeof date === 'string') {
             date = date_utils.parse(date);
         }
@@ -1339,7 +1379,7 @@ export default class Gantt {
                     !this.options.readonly &&
                     !this.options.readonly_dates
                 ) {
-                    bar.update_bar_position({ x: $bar.ox + $bar.finaldx });
+                    bar.update_bar_position({ x: $bar.ox + $bar.finaldx, moving: true });
                 }
             });
         });
@@ -1358,17 +1398,27 @@ export default class Gantt {
             bars.forEach((bar) => {
                 const $bar = bar.$bar;
                 if (!$bar.finaldx) return;
-                bar.date_changed();
+                bar.date_changed(is_dragging);
                 bar.compute_progress();
+                bar.compute_duration();
+                if (this.options.show_expected_progress) {
+                    bar.update_expected_progressbar_position();
+                }        
+                bar.update_progressbar_position();
+                bar.update_arrow_position();
+                bar.refresh();
+
                 bar.set_action_completed();
             });
+
+            this.unselect_all();
         });
 
         this.bind_bar_progress();
     }
 
     bind_bar_progress() {
-        let x_on_start = 0;
+        let x_on_start = 0, y_on_start = 0;
         let is_resizing = null;
         let bar = null;
         let $bar_progress = null;
@@ -1490,13 +1540,6 @@ export default class Gantt {
         let final_pos = ox + final_dx;
 
         const drn = final_dx > 0 ? 1 : -1;
-        let ignored_regions = this.get_ignored_region(final_pos, drn);
-        while (ignored_regions.length) {
-            final_pos += this.config.column_width * drn;
-            ignored_regions = this.get_ignored_region(final_pos, drn);
-            if (!ignored_regions.length)
-                final_pos -= this.config.column_width * drn;
-        }
         return final_pos - ox;
     }
 
